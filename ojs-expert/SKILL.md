@@ -43,7 +43,8 @@ Load the matching reference before answering non-trivial questions — they cont
 | Build/modify a plugin (any category), migrations, scheduled tasks/jobs from plugins, distribution | `references/plugin-development.md` |
 | Find/use a specific hook — verified names, arguments, ABORT semantics, removed-in-3.5 list | `references/hooks-catalog.md` |
 | Vue form fields (`Field*` classes), FormComponent API, custom handlers, authorization policies, file storage, validation | `references/ui-forms-handlers.md` |
-| Build/modify a theme, child themes, LESS variables, override frontend templates | `references/theme-development.md` |
+| Build/modify a theme, child themes, LESS variables, RTL, official-theme patterns, backend theming | `references/theme-development.md` |
+| Smarty tags, template variables per page, template inventory, menus/sidebar machinery, galley URLs | `references/frontend-templating.md` |
 | Call the REST API, API auth/tokens, OAI-PMH harvesting, COUNTER SUSHI | `references/rest-api.md` |
 | Integer constants for API params & code (roles, stages, statuses, decisions…) | `references/constants.md` |
 | Install, configure (`config.inc.php`), upgrade, jobs/scheduler, CLI tools, security hardening, troubleshooting | `references/admin-operations.md` |

@@ -88,6 +88,10 @@ ABORT-checked (plugin can fully replace SQL indexing): `ArticleSearchIndex::arti
 - `Decision::types` `[$collection]` + `Workflow::Decisions` `[$decisions, $stageId]` — add/remove/replace editorial decisions.
 - `Request::<property>` (e.g. `Request::getBaseUrl`), `API::<endpoint>::params` (e.g. `API::context::params`).
 - `GoogleScholarPlugin::references` — example of a plugin exposing its own hook for others.
+- **Navigation menus** (`PKPNavigationMenuService`): `NavigationMenus::itemTypes` `[&$types]` (add custom NMI types: `$types['NMI_TYPE_X'] = ['title'=>…, 'description'=>…]`) · `NavigationMenus::itemCustomTemplates` `[&$templates]` · `NavigationMenus::displaySettings` `[$navigationMenuItem, $navigationMenu]` (visibility/URL at render time).
+- **Backend settings-tab injection**: `Template::Settings::website` (also `::context`, `::distribution` variants) — append a tab: `$output .= $templateMgr->fetch($this->getTemplateResource('myTab.tpl'))` (verified: staticPages).
+- **Legacy form lifecycle** (`issueform` example, used by the Immersion theme): `issueform::display`, `::initdata`, `::readuservars`, `::execute` — extend backend Smarty/FBV forms end-to-end.
+- `Templates::Common::Sidebar` — in 3.5 PKPTemplateManager registers its own `displaySidebar()` here, rendering enabled block plugins from the context/site `sidebar` setting (see frontend-templating.md §4); your callback can append additional sidebar HTML.
 
 ## 10. Removed in 3.5 (deprecation warning if registered)
 

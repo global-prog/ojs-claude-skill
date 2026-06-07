@@ -44,7 +44,8 @@ ojs-expert/
 │   ├── plugin-development.md         # anatomy, categories, lifecycle API, migrations, jobs, 3.5 migration checklist
 │   ├── hooks-catalog.md              # ~50 hooks verified at call sites: args, ABORT semantics, removed-in-3.5
 │   ├── ui-forms-handlers.md          # Field* classes, FormComponent, handlers, authorization policies
-│   ├── theme-development.md          # ThemePlugin API, LESS, child themes, template hierarchy
+│   ├── theme-development.md          # ThemePlugin API, LESS variables, child themes, RTL, official-theme patterns
+│   ├── frontend-templating.md        # Smarty tag inventory, template variables, menus/sidebar machinery
 │   ├── rest-api.md                   # full endpoint inventory, auth, SUSHI, OAI-PMH, curl recipes
 │   ├── constants.md                  # verified integer constants (roles, stages, statuses, decisions…)
 │   ├── admin-operations.md           # install, config.inc.php, upgrade, jobs/scheduler, hardening

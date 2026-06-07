@@ -137,6 +137,8 @@ class StaticPagesSchemaMigration extends Migration {
 public function getInstallMigration() { return new StaticPagesSchemaMigration(); }
 ```
 
+⚠️ **The install migration runs on BOTH fresh install and version upgrades** — `Plugin::register()` wires `updateSchema()` to the `Installer::postInstall` hook with no version gating, and there is **no `getUpgradeMigration()`**. Write migrations idempotently (`Schema::hasTable()` guards) or branch internally on the installed version. `php lib/pkp/tools/installPluginVersion.php <path>/version.xml` always runs the migration + settings/email/filter installs; `VersionDAO::insertVersion` handles the version bookkeeping (equal → update row, newer → new current row, downgrade → exception).
+
 **Email templates** (verified: orcidProfile): `public function getInstallEmailTemplatesFile() { return $this->getPluginPath() . '/emailTemplates.xml'; }` — register the Mailable too via the `Mailer::Mailables` hook so it shows in the template UI.
 
 **Locales**: `plugins/<cat>/<name>/locale/<locale>/locale.po` (short codes: `en`, `fr_CA`). Keys `plugins.<category>.<name>.*`; use `__('key')` / `{translate key="…"}`. Auto-discovered in 3.4+; gallery plugins must ship at least one locale. Never concatenate translated phrases.
@@ -296,7 +298,131 @@ class MyListener {
 ```
 Events live in `lib/pkp/classes/observers/events/` + `classes/observers/events/`.
 
-## 9. Advanced extension points
+## 9. Notifications from plugins
+
+3.5 rewrote notifications on Eloquent: `PKP\notification\Notification extends Model` (table `notifications`); constants moved from the removed `PKPNotification` onto it; `NotificationDAO` removed.
+
+```php
+use PKP\notification\Notification;
+use APP\notification\NotificationManager;
+
+$notificationManager = new NotificationManager();
+// 3.5 signature (⚠️ BREAKING: 3.4 took $request as FIRST argument — drop it when migrating):
+$notificationManager->createNotification(
+    $userId,                                       // ?int
+    Notification::NOTIFICATION_TYPE_SUCCESS,       // ?int type
+    $contextId,                                    // default Application::SITE_CONTEXT_ID
+    $assocType, $assocId,                          // optional association
+    Notification::NOTIFICATION_LEVEL_NORMAL,       // TRIVIAL=1, NORMAL=2, TASK=3
+    ['contents' => __('plugins.generic.myPlugin.notify')]   // params
+);
+// Quick toast: createTrivialNotification($userId, Notification::NOTIFICATION_TYPE_SUCCESS, $params)
+```
+
+Custom types: offset from `Notification::NOTIFICATION_TYPE_PLUGIN_BASE` (`0x6000001`). Presentation (message/URL/icon) dispatches through `PKPNotificationManager::getNotificationMessage()` and per-type `NotificationManagerDelegate` subclasses (constructor takes the type int; override `getNotificationMessage/Url/Contents`, `getStyleClass`, `isVisibleToAllUsers`). Example delegate + batch pattern: `jobs/notifications/NewAnnouncementNotifyUsers` + `managerDelegate/AnnouncementNotificationManager`.
+
+## 10. Custom Mailables from a plugin
+
+```php
+use PKP\mail\Mailable;
+use PKP\mail\traits\{Recipient, Sender, Configurable, Unsubscribe};
+
+class MyPluginNotify extends Mailable
+{
+    use Recipient;      // ->recipients([$user], $locale)  (to() throws — forces this)
+    use Configurable;   // makes it editable in Workflow → Emails UI
+    // use Sender;      // ->sender($user)  (from() throws)
+    // use Unsubscribe; // ->allowUnsubscribe($notification) + List-Unsubscribe header
+
+    protected static ?string $name = 'plugins.generic.myPlugin.mailable.name';
+    protected static ?string $description = 'plugins.generic.myPlugin.mailable.description';
+    protected static ?string $emailTemplateKey = 'MY_PLUGIN_NOTIFY';
+    protected static array $groupIds = [self::GROUP_OTHER];   // or GROUP_SUBMISSION/REVIEW/COPYEDITING/PRODUCTION
+    protected static bool $canDisable = true;
+
+    public function __construct(Context $context /* , ...data */) { parent::__construct([$context]); }
+}
+
+// Send (3.5): Laravel facade
+use Illuminate\Support\Facades\Mail;
+Mail::send((new MyPluginNotify($context))->recipients([$user])->setLocale($locale));
+```
+
+Register so it appears in the email-templates UI: `Mailer::Mailables` hook (push the class name into the Collection). Ship the default template via `getInstallEmailTemplatesFile()` pointing at:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE emails SYSTEM "../../../lib/pkp/dtd/emailTemplates.dtd">
+<emails>
+    <email key="MY_PLUGIN_NOTIFY"
+           name="plugins.generic.myPlugin.emails.notify.name"
+           subject="emails.myPluginNotify.subject"
+           body="emails.myPluginNotify.body"/>   <!-- attrs are LOCALE KEYS; alternateTo optional -->
+</emails>
+```
+
+## 11. Full custom REST API endpoints from a plugin
+
+**3.5 (Laravel):** controller extends `PKP\core\PKPBaseController` with three required methods, registered via the `APIHandler::endpoints::plugin` hook (the APIRouter is passed; `getHandlerPath()` is a free-form path — `/api/v1/<handlerPath>/...`):
+
+```php
+use PKP\core\PKPBaseController;
+use Illuminate\Support\Facades\Route;
+use PKP\security\Role;
+
+class MyController extends PKPBaseController
+{
+    public function getHandlerPath(): string { return 'myplugin'; }
+    public function getRouteGroupMiddleware(): array
+    {
+        return ['has.user', 'has.context',
+            self::roleAuthorizer([Role::ROLE_ID_MANAGER, Role::ROLE_ID_SITE_ADMIN])];
+    }
+    public function getGroupRoutes(): void
+    {
+        Route::get('items', $this->getItems(...))->name('myplugin.getItems');
+        Route::post('items', $this->addItem(...))->name('myplugin.addItem');
+    }
+    public function getItems(Request $illuminateRequest): JsonResponse { /* ... */ }
+}
+
+// in register():
+Hook::add('APIHandler::endpoints::plugin', function (string $hookName, $apiRouter): bool {
+    $apiRouter->registerPluginApiControllers([new MyController()]);   // throws on duplicate handler path
+    return Hook::CONTINUE;
+});
+```
+
+Modify EXISTING endpoints via the per-entity hook `APIHandler::endpoints::{entity}` (e.g. `::submissions`) — args `[$controller, $apiHandler]`.
+
+**3.4 (Slim):** handler extends `PKP\handler\APIHandler`; declare in the constructor:
+```php
+$this->_endpoints = ['GET' => [[
+    'pattern' => $this->getEndpointPattern() . '/items',
+    'handler' => [$this, 'getItems'],     // (SlimRequest $req, APIResponse $res, array $args)
+    'roles'   => [Role::ROLE_ID_MANAGER],
+]]];
+```
+
+## 12. Import/export filters (Native XML framework)
+
+Filters transform objects ↔ XML; registered via `filterConfig.xml` (returned from `getInstallFilterConfigFiles()`):
+
+```xml
+<filterConfig>
+  <filterGroup symbolic="article=>native-xml"
+      displayName="plugins.importexport.myPlugin.displayName"
+      description="..."
+      inputType="class::classes.submission.Submission[]"
+      outputType="xml::schema(plugins/importexport/myPlugin/my.xsd)" />
+  <filter inGroup="article=>native-xml"
+      class="APP\plugins\importexport\myPlugin\filter\ArticleMyXmlFilter"
+      isTemplate="0" />
+</filterConfig>
+```
+
+Class chains (core native plugin, the canonical reference): export `ArticleNativeXmlFilter → SubmissionNativeXmlFilter → NativeExportFilter → PKPImportExportFilter → PersistableFilter`; import mirrors with `NativeXml*Filter → NativeImportFilter`. Note: `pkp/exampleImportExport` exists but has **no 3.4/3.5 branch** (3.3-era) — use it for scaffolding shape only; copy filter patterns from `plugins/importexport/native` in the live install.
+
+## 13. Advanced extension points
 
 - **Custom editorial decision**: hook `Decision::types` (`$args[0]` = Eloquent Collection of `DecisionType`s — filter/map/push) and `Workflow::Decisions` (`$args[0]` array, `$args[1]` `$stageId`). New types extend `PKP\decision\DecisionType`, use constants in the **900 range**, implement `getDecision()`, `getStageId()`, `getSteps()`, `validate()`, `runAdditionalActions()`.
 - **Extend REST API output (maps)**: `app('maps')->extend(\PKP\announcement\maps\Schema::class, fn($output, $item, $map) => $output + ['myProp' => …]);`
@@ -304,16 +430,20 @@ Events live in `lib/pkp/classes/observers/events/` + `classes/observers/events/`
 - **Dynamic plugin instances** (verified: customBlockManager): a parent plugin registers N runtime instances: `PluginRegistry::register('blocks', new CustomBlockPlugin($name, $this), $this->getPluginPath());` with `getName()` returning the dynamic name.
 - **Multi-plugin bundles** (verified: webFeed): one generic plugin registers companion block + gateway plugins from `register()`.
 - **External APIs/OAuth** (verified: orcidProfile 3.4): custom page handler ops for the OAuth redirect/callback; HTTP via the shared Guzzle client `Application::get()->getHttpClient()`; tokens persisted with `updateSetting()`.
-- **Backend UI in Vue (3.5)**: recommended over Smarty pages. JS extension API at `pkp.registry` (from `js/classes/VueRegistry.js`): `registerComponent(name, comp)`, `getComponent(name)` (extend existing fields), `storeExtend/storeExtendFn/storeAddFn` (pinia stores). JS hooks exist to inject components into Dashboard, Workflow, FileManager, ReviewerManager, ParticipantManager, GalleyManager. Load the built bundle via `addJavaScript(..., ['contexts' => 'backend'])`. Examples: Storybook "Plugin Guide" section of the 3.5 UI library; `github.com/jardakotesovec/backend-ui-example-plugin`.
+- **Backend UI in Vue (3.5)**: recommended over Smarty pages. JS extension API at `pkp.registry` (from `js/classes/VueRegistry.js`): `registerComponent(name, comp)`, `getComponent(name)` (extend existing fields), `storeExtend/storeExtendFn/storeAddFn` (pinia stores). JS hooks exist to inject components into Dashboard, Workflow, FileManager, ReviewerManager, ParticipantManager, GalleyManager. Load the built bundle via `addJavaScript(..., ['contexts' => 'backend'])`. Examples: Storybook "Plugin Guide" section of the 3.5 UI library; `github.com/jardakotesovec/backend-ui-example-plugin`. Smarty for plugin backend pages (LoadHandler handlers, settings-tab injection like staticPages' `Template::Settings::website` hook) still works in 3.5 — deprecated, not removed.
+- **Role/permission checks** (3.5): `$user->hasRole([Role::ROLE_ID_MANAGER], $contextId)` (int or array); `Repo::userGroup()->userInGroup($userId, $userGroupId)`, `->userUserGroups($userId, $contextId)`, `->getByRoleIds([Role::ROLE_ID_REVIEWER], $contextId)`. `UserGroup` is Eloquent in 3.5 with scopes (`withContextIds`, `withRoleIds`, `withStageIds`, `masthead`…).
+- **Custom navigation menu item types**: `NavigationMenus::itemTypes` / `::itemCustomTemplates` / `::displaySettings` hooks — array shapes in `frontend-templating.md` §5.
+- **Custom Smarty tags**: `$templateMgr->registerPlugin('function', 'my_tag', [$this, 'smartyMyTag'])` — standard Smarty API on PKPTemplateManager.
+- **TinyMCE**: the tinymce plugin exposes **no extension hook** for editor config — there is no supported way for another plugin to alter TinyMCE init options.
 
-## 10. Testing, CI, distribution
+## 14. Testing, CI, distribution
 
 - **CI** (verified: staticPages/customBlockManager): `.github/workflows/<branch>.yml` using the composite action `pkp/pkp-github-actions@v1` with `plugin: true`, a matrix over `{application: ojs, php-version, database: mysql|pgsql}`; tests are **Cypress** functional specs in `cypress/tests/functional/`.
 - **Package**: `.tar.gz` with one top-level dir matching the product name; GPL-compatible `LICENSE`; exclude composer/npm dev cruft. `npm i -g pkp-plugin-cli && pkp-plugin release <name> --newversion 1.0.0.0`.
 - **Gallery**: PR to `github.com/pkp/plugin-gallery` — `<plugin category product>` XML with `<release date version md5>`, `<compatibility><version>` tags, `<certification type="official|reviewed|partner"/>`. Releases are immutable once merged.
 - **Manual install**: extract into `plugins/<category>/`, run `php lib/pkp/tools/installPluginVersion.php plugins/<category>/<name>/version.xml`, clear caches.
 
-## 11. 3.4 → 3.5 migration checklist for plugins
+## 15. 3.4 → 3.5 migration checklist for plugins
 
 1. PHP 8.2+; delete the `PKP_STRICT_MODE`/`class_alias` block; `.php` + namespace mandatory.
 2. Replace removed hooks (full list in hooks-catalog.md §10) — registering them triggers deprecation warnings via `Hook::addUnsupportedHooks()`.
@@ -325,4 +455,5 @@ Events live in `lib/pkp/classes/observers/events/` + `classes/observers/events/`
 8. Vue 2 → Vue 3: Options API/mixins deprecated → Composition API/composables; `ListPanel` → `Table`; use `pkp.registry` for component/store extension; don't pass translations via props.
 9. `fatalError()` → exceptions; Stringy → `Illuminate\Support\Str`; `*_codesafe` functions removed.
 10. Vendor JS paths moved (jQuery, jQuery UI, jQuery Validation, ChartJS) — fix hardcoded asset URLs.
-11. More DAOs replaced by `Repo::`/Eloquent (e.g. `ReviewAssignmentDAO` removed) — test all data access.
+11. More DAOs replaced by `Repo::`/Eloquent (e.g. `ReviewAssignmentDAO`, `NotificationDAO` removed) — test all data access.
+12. `createNotification()` signature changed: drop the leading `$request` argument; constants moved `PKPNotification` → `PKP\notification\Notification` (§9).
