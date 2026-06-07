@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Build artifacts — distribute via GitHub Releases instead
+*.zip
+
+# Research cache (raw fetched PKP docs, not part of the skill)
+_pkpdocs/
