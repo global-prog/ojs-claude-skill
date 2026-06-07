@@ -149,3 +149,53 @@ OJS sets `dir="rtl"` on `<body>` automatically for RTL locales (`$currentLocaleL
 4. Colour option does nothing → you overrode `@primary` but the option writes `@bg-base` (§3), or no `addLessVariables` re-injection in `init()`.
 5. Option not applying → options are per-context, saved in Website Settings → Appearance; `getOption()` returns defaults only before first save.
 6. RTL broken → ensure `rtl.less` imports last; verify `body[dir="rtl"]` actually set (locale metadata).
+
+## 10. Building a complete custom theme — production lessons (all source-verified, 3.5)
+
+Hard-won gotchas from building a full bespoke theme (standalone CSS, custom header/footer/homepage, dynamic data). Each caused a real bug.
+
+**Locale: `##plugins.themes.x.key##` showing on the live site.**
+- Symptom: every theme string renders as `##key##` while core English works.
+- Cause: OJS does **not** rebuild the compiled locale cache when a plugin is installed. The keys load fine, the cache is just stale.
+- Fix: **Administration → Clear Data Caches** (deletes `cache/fc-*`). This is the #1 post-install support answer.
+- Folder MUST be the short code: `locale/en/locale.po`, `locale/ar/locale.po` (not `en_US`). `Plugin::addLocaleData()` registers the `locale/` dir via `Locale::registerPath()`; it runs from `LazyLoadPlugin::register()` (line 37), which `ThemePlugin` inherits — so no manual call needed.
+- `.po` must be valid gettext: balanced `msgid`/`msgstr`, and **escape inner quotes** (`\"Spectral\"`) or loading silently fails. Validate with `msgfmt -c`.
+
+**Removing the default stylesheet drops base utility CSS.** A child theme that does `removeStyle('stylesheet')` (to ship its own CSS) loses utilities the default sheet provided — most visibly **`.cmp_skip_to_content`** (the skip links become *visible text* at the top of every page) and `.pkp_screen_reader` / `.pkp_helpers_display_none`. Re-add them:
+```css
+.cmp_skip_to_content a{position:absolute;inset-inline-start:-2000px;width:1px;height:1px;overflow:hidden;}
+.cmp_skip_to_content a:focus{inset-inline-start:0;width:auto;height:auto;overflow:visible;}
+.pkp_screen_reader{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+.pkp_helpers_display_none{display:none!important;}
+```
+
+**Header/footer wrapper contract** (must match exactly or pages break). Header opens: `<body>` → `pkp_structure_page` → `pkp_structure_head`(header) → nav → `pkp_structure_content` → `pkp_structure_main`. Footer closes: `pkp_structure_main` → (sidebar) → `pkp_structure_content` → footer wrapper → `pkp_structure_page` → `</body>`. Include `headerHead.tpl` (it emits the whole `<head>`; don't add your own) and `skipLinks.tpl`. Capture `homeUrl` yourself (`{url page="index" router=PKP\core\PKPApplication::ROUTE_PAGE}`) — it is **not** a global.
+
+**Sidebar layout via the `.has_sidebar` modifier**, not `:has()`. Core adds `has_sidebar` to `pkp_structure_content` when a sidebar exists; key your grid off it. To suppress the footer's block-sidebar on a page with its own bespoke sidebar, `{assign var="isFullWidth" value=true}` **before** the header include (footer checks `{if empty($isFullWidth)}`). Render admin block plugins yourself with `{capture}{call_hook name="Templates::Common::Sidebar"}{/capture}`.
+
+**Dynamic navigation + footer from OJS menus.** Primary nav: `{load_menu name="primary" id="navigationPrimary" ulClass="..."}` (outputs `<ul class="pkp_nav_list"><li><a>`). Register extra areas in `init()` with `$this->addMenuArea(['footerCol1','footerCol2'])`; they become assignable in Settings → Website → Navigation. `{load_menu name=$area}` returns `''` when no menu is assigned → fall back to option links.
+
+**Dynamic homepage stats** via Repo collectors (run only on the homepage template; guard null context — the issue collector throws without a context id):
+```php
+$articles = Repo::submission()->getCollector()->filterByContextIds([$id])
+    ->filterByStatus([PKPSubmission::STATUS_PUBLISHED])->getCount();
+$issues = Repo::issue()->getCollector()->filterByContextIds([$id])->filterByPublished(true)->getMany();
+```
+Gotcha: the **issue collector `orderBy` takes no direction** (ORDERBY_DATE_PUBLISHED is hardcoded DESC) — compute the earliest year with `min()` in PHP, not `limit(1)`.
+
+**Rich-text + hyperlinks in theme options.** `FieldRichTextarea` works as a theme option (verified: no allow-list in `ThemePlugin::addOption`; core `PKPMastheadForm` uses it without `uploadUrl`). Defaults give a `link` button. Output with **`|strip_unsafe_html`** (HTMLPurifier; allows `<a href>`,`<p>`,`<strong>`,`<ul>`, strips `<script>`) — never `|escape` (shows literal HTML) or raw (XSS). Do **not** add the `image` plugin without a valid `uploadUrl`. Note: theme option values are **single-language** (not locale-keyed) — for multilingual text, fall back to OJS multilingual fields (`getLocalizedData('description')`).
+
+**Locale switcher link** (build your own, there is no `languageToggle.tpl` include):
+```smarty
+{foreach from=$supportedLocales key=loc item=name}
+  <a href="{url page="user" op="setLocale" path=$loc source=$smarty.server.SERVER_NAME|cat:$smarty.server.REQUEST_URI}">{$name|escape}</a>
+{/foreach}
+```
+`source` must be host+URI (a hostless `REQUEST_URI` is treated as a host → broken redirect); do **not** `|escape` it.
+
+**Theme-added SEO / Open Graph meta.** Core emits article `citation_*` (Google Scholar) + Dublin Core meta via indexing plugins through `{load_header}` (in `headerHead.tpl`) and the `Templates::Article::Main` hook — preserve both. Add journal-level OG/Twitter/description yourself from the `TemplateManager::display` hook (fires before `headerHead` renders), keyed so they don't duplicate:
+```php
+$templateMgr->addHeader('ogTitle', '<meta property="og:title" content="'.htmlspecialchars($name).'">');
+```
+
+**Custom CSS escape hatch.** Expose a `customCss` `FieldTextarea`, inject inline with high priority so it wins: `$this->addStyle('customCss', $css, ['inline'=>true, 'priority'=>999])`. Strip `</style>`/`<script>` defensively. Inline styles emit in priority then registration order (`ksort`); default priority is `STYLE_SEQUENCE_NORMAL` (10), so 999 = last. See rest-api/architecture refs for the data-layer 3.5 gotchas a theme also hits: Announcement is Eloquent (`->datePosted->format($dateFormatShort)`, `getLocalizedData('title')`, `->id`), keywords are objects (`$keyword.name`), affiliations are entities (`$author->getAffiliations()`), DOI display uses `getData('doiObject')->getData('resolvingUrl')`, and `article_details` must use the **viewed** `$publication` (not `getCurrentPublication()`) or old-version views show the current version.

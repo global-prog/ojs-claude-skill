@@ -7,3 +7,16 @@ __pycache__/
 
 # Research cache (raw fetched PKP docs, not part of the skill)
 _pkpdocs/
+
+# theme build artifacts (not part of the skill)
+alnakib-build/
+sjesr-build/
+sjesr/
+test-output/
+alnakib-ojs-theme/
+*.png
+preview*.html
+povalidate.py
+compile_test.less
+compiled_out.css
+_ojs_src/
