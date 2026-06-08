@@ -159,7 +159,8 @@ Hard-won gotchas from building a full bespoke theme (standalone CSS, custom head
 - Cause: OJS does **not** rebuild the compiled locale cache when a plugin is installed. The keys load fine, the cache is just stale.
 - Fix: **Administration → Clear Data Caches** (deletes `cache/fc-*`). This is the #1 post-install support answer.
 - Folder MUST be the short code: `locale/en/locale.po`, `locale/ar/locale.po` (not `en_US`). `Plugin::addLocaleData()` registers the `locale/` dir via `Locale::registerPath()`; it runs from `LazyLoadPlugin::register()` (line 37), which `ThemePlugin` inherits — so no manual call needed.
-- `.po` must be valid gettext: balanced `msgid`/`msgstr`, and **escape inner quotes** (`\"Spectral\"`) or loading silently fails. Validate with `msgfmt -c`.
+- `.po` must be valid gettext: balanced `msgid`/`msgstr`, and **escape inner quotes** (`\"Spectral\"`) or loading silently fails. Validate with `msgfmt -c` (NOT a line counter).
+- **CRITICAL — put a blank line between every entry.** OJS 3.5's PO loader separates entries on blank lines; consecutive `msgid`/`msgstr` pairs with *no* blank line between them get silently dropped, keeping only the **last** entry of each blank-line-delimited block. Symptom: a *positional* `##key##` pattern where only the last option in each section resolves and the rest show `##` (looks like a partial cache miss but isn't). Match the default theme: one blank line after every entry. Real fix that caused this: a hand-written `.po` with no inter-entry blank lines.
 
 **Removing the default stylesheet drops base utility CSS.** A child theme that does `removeStyle('stylesheet')` (to ship its own CSS) loses utilities the default sheet provided — most visibly **`.cmp_skip_to_content`** (the skip links become *visible text* at the top of every page) and `.pkp_screen_reader` / `.pkp_helpers_display_none`. Re-add them:
 ```css

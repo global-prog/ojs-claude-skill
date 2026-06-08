@@ -141,7 +141,9 @@ public function getInstallMigration() { return new StaticPagesSchemaMigration();
 
 **Email templates** (verified: orcidProfile): `public function getInstallEmailTemplatesFile() { return $this->getPluginPath() . '/emailTemplates.xml'; }` — register the Mailable too via the `Mailer::Mailables` hook so it shows in the template UI.
 
-**Locales**: `plugins/<cat>/<name>/locale/<locale>/locale.po` (short codes: `en`, `fr_CA`). Keys `plugins.<category>.<name>.*`; use `__('key')` / `{translate key="…"}`. Auto-discovered in 3.4+; gallery plugins must ship at least one locale. Never concatenate translated phrases.
+**Locales**: `plugins/<cat>/<name>/locale/<locale>/locale.po` (short codes: `en`, `fr_CA` — never `en_US` in 3.4+). Keys `plugins.<category>.<name>.*`; use `__('key')` / `{translate key="…"}`. Auto-discovered (`Plugin::addLocaleData()` registers the dir via `Locale::registerPath`, called from `LazyLoadPlugin::register`). Never concatenate translated phrases. Two gotchas that cause `##key##` on a live site:
+- **Blank line between every entry is mandatory** — the PO loader splits on blank lines; consecutive `msgid`/`msgstr` with no blank line between them drop all but the last of each block (a positional `##` pattern). `msgfmt -c` won't flag it but the loader does; match the bundled .po format.
+- **Locale cache isn't rebuilt on plugin install** — newly added keys show `##` until **Administration → Clear Data Caches** (deletes `cache/fc-*`). Standard post-install step.
 
 **Composer deps**: ship `composer.json` + `composer.lock` with `"config": {"vendor-dir": "lib/vendor"}` (isolates from core vendor tree); deps installed at build/release (verified: citationStyleLanguage, paypal).
 
