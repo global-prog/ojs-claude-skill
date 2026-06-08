@@ -192,6 +192,19 @@ $ml = function($k){ $v=$this->getLocalizedOption($k); if($v===null||$v==='' ){$r
 ```
 Keep colours/fonts/toggles/URLs/numbers single-value; make only user-facing TEXT multilingual.
 
+**CRITICAL multilingual-default gotcha (causes "all fields blank" in the settings form).** A multilingual field's default **must be a locale-keyed array**, not a scalar — otherwise the settings form renders an **empty** input. Why: `PKPThemeForm` sets each field's `value` from `getOptionValues()` (saved value, or `null` if unsaved), and `Field::getConfig()` does `value ?? default`. So for an unsaved option the form falls back to `->default`. A multilingual Vue field binds to an object like `{"en":"…"}`; given a scalar string it can't map it to any locale tab and shows nothing. (Non-multilingual fields with scalar defaults pre-fill fine — which is why only the multilingual ones look blank.) Fix: when you flip `isMultilingual`, wrap the default too. The render path (`getOption`/`getLocalizedOption`) works with a scalar, so this is purely for the form UI:
+```php
+foreach ($multilingualKeys as $k) {
+    $opt = $this->options[$k]; $opt->isMultilingual = true;
+    if (is_string($opt->default) && $opt->default !== '') {
+        $opt->default = ['en' => $opt->default] + (isset($ar[$k]) ? ['ar' => $ar[$k]] : []);
+    }
+}
+```
+Seed `en` (OJS's universal fallback) plus any second-locale strings you have; blank locale tabs fall back via `getLocalizedOption`. Empty-string defaults stay scalar (the field is an optional override).
+
+**Locale switcher also on the site index (`.../index/{locale}`).** Build the toggle for the main OJS platform/site index too, where there is **no** journal context: source the locales from the site, not just the context — `$locales = $context ? $context->getSupportedLocaleNames() : $request->getSite()->getSupportedLocaleNames();` (both expose `getSupportedLocaleNames()`), and keep only the `PKPPageRouter` guard. `$router->url($request, null, $page, $op, $path, urlLocaleForPage: $code)` then produces correct site-level URLs.
+
 **Locale switcher link — 3.5 embeds the locale in the URL; `user/setLocale` is GONE.** OJS 3.5 removed the `user` page handler entirely (`pages/user/UserHandler.php` no longer exists), so the old `{url page="user" op="setLocale" path=$loc source=…}` link **404s / silently fails** — a real, easy-to-miss bug when porting a 3.3/3.4 theme. The 3.5 mechanism is URL-embedded locale: the `{url}` Smarty function (and `PKPPageRouter::url`) take a **`urlLocaleForPage`** parameter. Because the requested *path args* are not exposed as a template variable (`$requestedPage`/`$requestedOp` are, `requestedArgs` is **not**), build the switch links in PHP from the `TemplateManager::display` hook, mirroring PKPTemplateManager's own hreflang logic, and assign them for the template to iterate:
 ```php
 $request = Application::get()->getRequest();
