@@ -184,7 +184,13 @@ $issues = Repo::issue()->getCollector()->filterByContextIds([$id])->filterByPubl
 ```
 Gotcha: the **issue collector `orderBy` takes no direction** (ORDERBY_DATE_PUBLISHED is hardcoded DESC) — compute the earliest year with `min()` in PHP, not `limit(1)`.
 
-**Rich-text + hyperlinks in theme options.** `FieldRichTextarea` works as a theme option (verified: no allow-list in `ThemePlugin::addOption`; core `PKPMastheadForm` uses it without `uploadUrl`). Defaults give a `link` button. Output with **`|strip_unsafe_html`** (HTMLPurifier; allows `<a href>`,`<p>`,`<strong>`,`<ul>`, strips `<script>`) — never `|escape` (shows literal HTML) or raw (XSS). Do **not** add the `image` plugin without a valid `uploadUrl`. Note: theme option values are **single-language** (not locale-keyed) — for multilingual text, fall back to OJS multilingual fields (`getLocalizedData('description')`).
+**Rich-text + hyperlinks in theme options.** `FieldRichTextarea` works as a theme option (verified: no allow-list in `ThemePlugin::addOption`; core `PKPMastheadForm` uses it without `uploadUrl`). Defaults give a `link` button. Output with **`|strip_unsafe_html`** (HTMLPurifier; allows `<a href>`,`<p>`,`<strong>`,`<ul>`, strips `<script>`) — never `|escape` (shows literal HTML) or raw (XSS). Do **not** add the `image` plugin without a valid `uploadUrl`.
+
+**Multilingual theme options** (verified working; no core theme uses it but the chain is fully wired): set `isMultilingual` on the field — either `addOption('x','FieldRichTextarea',['isMultilingual'=>true])` or, post-hoc for many, `$this->options['x']->isMultilingual = true;` in a loop after the `addOption` calls. `PKPThemeForm` renders per-locale tabs, the PUT `/contexts/{id}/theme` save (`ThemePlugin::saveOption`) stores the locale-keyed array as JSON (`setting_type=object`), and `getOptionValues` reconstructs it. Retrieve with **`$this->getLocalizedOption('x')`** (NOT `getOption`, which returns the raw `['en'=>…,'ar'=>…]` array). Make the getter robust: fall back to the raw scalar when the localized value is empty, so single-value defaults and pre-multilingual saved values still render:
+```php
+$ml = function($k){ $v=$this->getLocalizedOption($k); if($v===null||$v==='' ){$r=$this->getOption($k); if(is_string($r))$v=$r;} return (string)$v; };
+```
+Keep colours/fonts/toggles/URLs/numbers single-value; make only user-facing TEXT multilingual.
 
 **Locale switcher link** (build your own, there is no `languageToggle.tpl` include):
 ```smarty
