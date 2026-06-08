@@ -192,13 +192,35 @@ $ml = function($k){ $v=$this->getLocalizedOption($k); if($v===null||$v==='' ){$r
 ```
 Keep colours/fonts/toggles/URLs/numbers single-value; make only user-facing TEXT multilingual.
 
-**Locale switcher link** (build your own, there is no `languageToggle.tpl` include):
-```smarty
-{foreach from=$supportedLocales key=loc item=name}
-  <a href="{url page="user" op="setLocale" path=$loc source=$smarty.server.SERVER_NAME|cat:$smarty.server.REQUEST_URI}">{$name|escape}</a>
-{/foreach}
+**Locale switcher link — 3.5 embeds the locale in the URL; `user/setLocale` is GONE.** OJS 3.5 removed the `user` page handler entirely (`pages/user/UserHandler.php` no longer exists), so the old `{url page="user" op="setLocale" path=$loc source=…}` link **404s / silently fails** — a real, easy-to-miss bug when porting a 3.3/3.4 theme. The 3.5 mechanism is URL-embedded locale: the `{url}` Smarty function (and `PKPPageRouter::url`) take a **`urlLocaleForPage`** parameter. Because the requested *path args* are not exposed as a template variable (`$requestedPage`/`$requestedOp` are, `requestedArgs` is **not**), build the switch links in PHP from the `TemplateManager::display` hook, mirroring PKPTemplateManager's own hreflang logic, and assign them for the template to iterate:
+```php
+$request = Application::get()->getRequest();
+$router  = $request->getRouter();
+$context = $request->getContext();
+if ($context && $router instanceof \PKP\core\PKPPageRouter
+    && count($locales = $context->getSupportedLocaleNames()) > 1) {
+    $page = $router->getRequestedPage($request);
+    $op   = $router->getRequestedOp($request);
+    $path = $router->getRequestedArgs($request);          // array — the missing template var
+    $cur  = \PKP\facades\Locale::getLocale();
+    $out  = [];
+    foreach ($locales as $code => $name) {
+        $out[] = ['code'=>$code, 'name'=>$name, 'current'=>$code===$cur,
+                  'url'=>$router->url($request, null, $page, $op, $path, urlLocaleForPage: $code)];
+    }
+    $templateMgr->assign('myLocaleToggle', $out);          // {foreach}…<a href="{$loc.url|escape}">
+}
 ```
-`source` must be host+URI (a hostless `REQUEST_URI` is treated as a host → broken redirect); do **not** `|escape` it.
+`$supportedLocales` IS a frontend template var (a `code=>name` map from `getSupportedLocaleNames(LANGUAGE_LOCALE_ONLY)`), but it only gives names — it can't build a same-page switch URL on its own. There is no `languageToggle.tpl` include.
+
+**Overriding frontend object/page templates — parity checklist (each omission is a real regression).** When you replace `article_summary`/`issue_toc`/`article_details`/`indexJournal` with bespoke markup, you inherit the handler's assigned vars but must keep the *logic*, or live data silently disappears:
+- **`galley_link.tpl` marks every galley `restricted` unless `hasAccess` is truthy in scope.** In `article_details` the handler assigns a global `$hasAccess`, so an include works. In a **TOC/list** (`article_summary`), there is no per-article `$hasAccess` — you must compute it and pass it, or open-access downloads get a `.restricted` class + a "subscription access" screen-reader label: `{assign var=hasArticleAccess value=$hasAccess}{if $currentContext->getData('publishingMode')==APP\journal\Journal::PUBLISHING_MODE_OPEN || $publication->getData('accessStatus')==APP\submission\Submission::ARTICLE_ACCESS_OPEN}{assign var=hasArticleAccess value=1}{/if}` then `{include … hasAccess=$hasArticleAccess purchaseFee=$currentJournal->getData('purchaseArticleFee') purchaseCurrency=$currentJournal->getData('currency')}`.
+- **Respect per-article author hiding:** `{if (!$section.hideAuthor && $publication->getData('hideAuthor')==APP\submission\Submission::AUTHOR_TOC_DEFAULT) || $publication->getData('hideAuthor')==APP\submission\Submission::AUTHOR_TOC_SHOW}` — not just `$section.hideAuthor`.
+- **Filter TOC galleys to primary files** with `$primaryGenreIds` (skip dependent/supplementary): `{if $primaryGenreIds}{assign var=file value=$galley->getFile()}{if !$galley->getData('urlRemote') && !($file && in_array($file->getGenreId(),$primaryGenreIds))}{continue}{/if}{/if}`.
+- **`indexJournal` must call `{call_hook name="Templates::Index::journal"}`** (homepage plugins/carousels hook here) **and render `{$additionalHomeContent}`** (the admin's Settings → Website → Appearance → *Additional Content*) — both are trivially dropped when you rewrite the homepage, silently discarding admin content and breaking plugins.
+- **Handler-assigned vars worth preserving:** `$categories`, `$ccLicenseBadge` + `$currentContext->getLocalizedData('licenseTerms')` (copyright block), `$pubIdPlugins` (URN etc.), `$issueGalleys` (full-issue PDF on the issue page), `$userGroupsById` (author role labels), `array_reverse($article->getPublishedPublications())` (version history). `$dateFormatShort`/`$dateFormatLong` are PHP `date()` formats (use with `|date_format` or `DateTime::format`). To keep one `issue_toc.tpl` for both the homepage and the issue page, gate the issue-only chrome (cover, identifiers, full-issue galleys, publish date) behind a `hideCover` flag you pass from the homepage include.
+
+`source` (the old 3.3/3.4 approach, for reference only): had to be host+URI, unescaped.
 
 **Theme-added SEO / Open Graph meta.** Core emits article `citation_*` (Google Scholar) + Dublin Core meta via indexing plugins through `{load_header}` (in `headerHead.tpl`) and the `Templates::Article::Main` hook — preserve both. Add journal-level OG/Twitter/description yourself from the `TemplateManager::display` hook (fires before `headerHead` renders), keyed so they don't duplicate:
 ```php
