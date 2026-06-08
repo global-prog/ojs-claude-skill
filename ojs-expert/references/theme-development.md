@@ -154,6 +154,10 @@ OJS sets `dir="rtl"` on `<body>` automatically for RTL locales (`$currentLocaleL
 
 Hard-won gotchas from building a full bespoke theme (standalone CSS, custom header/footer/homepage, dynamic data). Each caused a real bug.
 
+**A re-uploaded plugin update silently does NOTHING unless you bump `<release>` in `version.xml`.** This is the #1 cause of "my fix didn't take effect / settings still look wrong" after re-installing. OJS compares the uploaded plugin's version with the installed one; if it is the **same or lower**, the Plugin Gallery upload is rejected/ignored and the **old files stay in place** — so none of your template/CSS/option changes appear and the admin keeps seeing the previous (e.g. empty/broken) build. Increment the four-part version for **every** rebuild you want installed (`1.0.1.0` → `1.0.2.0` → …), re-upload, then **Clear Data Caches**. When iterating, treat "bump version.xml" as part of every package step, not an afterthought.
+
+**Multilingual theme-option fields read as empty in the settings form** even though the rest works — see the dedicated multilingual section: a multilingual field needs a **locale-keyed default object** (a scalar leaves it blank), and to never show a blank tab, fill **every** supported locale (`$ctx->getSupportedLocales()`), not just `en`.
+
 **Locale: `##plugins.themes.x.key##` showing on the live site.**
 - Symptom: every theme string renders as `##key##` while core English works.
 - Cause: OJS does **not** rebuild the compiled locale cache when a plugin is installed. The keys load fine, the cache is just stale.
@@ -194,14 +198,19 @@ Keep colours/fonts/toggles/URLs/numbers single-value; make only user-facing TEXT
 
 **CRITICAL multilingual-default gotcha (causes "all fields blank" in the settings form).** A multilingual field's default **must be a locale-keyed array**, not a scalar — otherwise the settings form renders an **empty** input. Why: `PKPThemeForm` sets each field's `value` from `getOptionValues()` (saved value, or `null` if unsaved), and `Field::getConfig()` does `value ?? default`. So for an unsaved option the form falls back to `->default`. A multilingual Vue field binds to an object like `{"en":"…"}`; given a scalar string it can't map it to any locale tab and shows nothing. (Non-multilingual fields with scalar defaults pre-fill fine — which is why only the multilingual ones look blank.) Fix: when you flip `isMultilingual`, wrap the default too. The render path (`getOption`/`getLocalizedOption`) works with a scalar, so this is purely for the form UI:
 ```php
+$ctx = Application::get()->getRequest()?->getContext();
+$supported = $ctx ? $ctx->getSupportedLocales() : ['en'];   // fill EVERY tab
 foreach ($multilingualKeys as $k) {
     $opt = $this->options[$k]; $opt->isMultilingual = true;
     if (is_string($opt->default) && $opt->default !== '') {
-        $opt->default = ['en' => $opt->default] + (isset($ar[$k]) ? ['ar' => $ar[$k]] : []);
+        $base = $opt->default; $obj = [];
+        foreach ($supported as $loc) { $obj[$loc] = ($loc === 'ar' && isset($ar[$k])) ? $ar[$k] : $base; }
+        $obj['en'] = $obj['en'] ?? $base;
+        $opt->default = $obj;
     }
 }
 ```
-Seed `en` (OJS's universal fallback) plus any second-locale strings you have; blank locale tabs fall back via `getLocalizedOption`. Empty-string defaults stay scalar (the field is an optional override).
+**Seed every supported locale, not just `en`** — a multilingual field shows blank in any locale missing from the default object, so an `en`-only default looks empty when the admin opens (or the journal's primary is) the Arabic tab. Use the journal's real locales (`$ctx->getSupportedLocales()`), putting translated strings where you have them and the base value elsewhere. Empty-string defaults stay scalar (those are optional "leave blank to use journal data" overrides, intentionally blank).
 
 **Locale switcher also on the site index (`.../index/{locale}`).** Build the toggle for the main OJS platform/site index too, where there is **no** journal context: source the locales from the site, not just the context — `$locales = $context ? $context->getSupportedLocaleNames() : $request->getSite()->getSupportedLocaleNames();` (both expose `getSupportedLocaleNames()`), and keep only the `PKPPageRouter` guard. `$router->url($request, null, $page, $op, $path, urlLocaleForPage: $code)` then produces correct site-level URLs.
 
