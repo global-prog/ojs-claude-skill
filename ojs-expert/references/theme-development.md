@@ -82,7 +82,21 @@ public function init()
     // Append child LESS into the parent's already-registered stylesheet:
     $this->modifyStyle('stylesheet', ['addLess' => ['styles/index.less']]);
 
-    // Curate inherited options:
+    // Curate inherited options. CAUTION: removeOption() in init() is UNRELIABLE for
+    // dropping a PARENT theme's option from the active child's settings form —
+    // PKPThemeForm re-runs every theme's init() (it calls $plugin->init() then
+    // getOptionsConfig() per theme), so the parent re-registers the option right
+    // after you remove it and it reappears. removeOption() is dependable only for
+    // options the CHILD itself added. To reliably strip an INHERITED option, override
+    // getOptionsConfig() and unset it from the merged config (ThemePlugin::
+    // getOptionsConfig = array_merge(parent, child); PKPThemeForm reads it):
+    //   public function getOptionsConfig() {
+    //       $o = parent::getOptionsConfig();
+    //       foreach (['typography','useHomepageImageAsHeader','displayStats'] as $r) unset($o[$r]);
+    //       return $o;
+    //   }
+    // Corollary: because init() re-runs, keep it IDEMPOTENT — don't rely on one-time
+    // side effects (e.g. Hook::add in init() re-registers the callback each rebuild).
     $this->removeOption('typography');
     $this->removeOption('useHomepageImageAsHeader');
     $this->addOption('accentColour', 'FieldColor', [
