@@ -162,6 +162,8 @@ The workhorse hooks: `LoadHandler` (custom pages), `LoadComponentHandler` (grids
 
 Storage is identical (`getSetting`/`updateSetting`). The UI differs:
 
+**Storage facts** (verified, `pkp-lib` `stable-3_5_0` `classes/migration/install/CommonMigration.php`): the `plugin_settings` table stores `setting_value` as **`mediumText` (`->nullable()`, ≈16 MB)** — so a setting can hold a moderately large JSON blob (e.g. a cached author/issue list) without truncation. But `setting_value` is **not indexed** and the whole row set for a plugin is read on `getSetting`, so keep cached blobs bounded and prefer the real cache (`cache/` via `CacheManager`) for hot, large data. `setting_name` is `string(80)` (keys must fit), `setting_type` is `string(6)` (`bool|int|float|string|object`), and the only unique key is **`(plugin_name, context_id, setting_name)`** — settings are inherently per-context (`context_id = 0` ⇒ site-wide). `updateSetting($name, $value, $type, $isLocalized)` auto-detects `$type`; pass `'object'` explicitly when storing arrays so they round-trip as JSON.
+
 ### 3.4: `getActions()` + `manage()` + Smarty `Form` in `AjaxModal`
 ```php
 public function getActions($request, $actionArgs)
